@@ -58,7 +58,6 @@
   <ItemGroup>
     <Folder Include="EmailTemplates\" />
     <Folder Include="MailFiles\" />
-    <Folder Include="Models\Messaging\" />
     <Content Include="EmailTemplates\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
