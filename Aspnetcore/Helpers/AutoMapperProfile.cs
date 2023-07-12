@@ -5,6 +5,7 @@ using WebApi.Models;
 using System.Linq;
 using System;
 using System.Collections.Generic;
+using WebApi.Models.Messaging;
 
 namespace WebApi.Helpers
 {
@@ -13,7 +14,7 @@ namespace WebApi.Helpers
         public AutoMapperProfile()
         {
             CreateMap<User, UserModel>();
-
+            CreateMap<Mail, MailModel>();
         }
     }
 }

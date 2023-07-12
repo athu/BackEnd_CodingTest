@@ -23,6 +23,7 @@ using Microsoft.Extensions.Logging;
 using System.Net.Mail;
 using System.IO;
 using WebApi.Models.Messaging;
+using System.Threading.Tasks;
 
 namespace WebApi.Controllers
 {
@@ -40,8 +41,7 @@ namespace WebApi.Controllers
         private IMapper _mapper;
         private readonly AppSettings _appSettings;
         private ILogger _log;
-        private DataContext _context;
-
+       
         public MailsController(
             IMailService mailService,
             IMapper mapper,
@@ -52,8 +52,7 @@ namespace WebApi.Controllers
             _mailService = mailService;
             _mapper = mapper;
             _log = log;
-            _appSettings = appSettings.Value;
-            _context = context;
+            _appSettings = appSettings.Value;           
             _disposable = new Disposable();
         }
 
@@ -88,113 +87,88 @@ namespace WebApi.Controllers
         {
             return null;
         }
-
-        // [AllowAnonymous]
+               
         [HttpGet("folder/{paramFolderId}")]
-        public IActionResult GetFolder(int paramFolderId)
-        {
-            HttpContext.Response.RegisterForDispose(_disposable);
-            var userId = UserService.GetUserIdFromToken(Request.Headers["Authorization"], _appSettings.Secret);
-            var userIdParam = new SqlParameter("@UserID", userId);
-            var folderIdParam = new SqlParameter("FolderID", paramFolderId);
-            var results = _context.MailModel.FromSqlRaw(@"
-                IF @FolderID = 0
-                    select m.Id, su.StaffName as SendingStaffName, su.StaffEmail as SendingStaffEmail, ru.StaffName as ReceivingStaffName,
-                    ru.StaffEmail as ReceivingStaffEmail, m.Subject, m.Message, m.SentTime, m.SentSuccessToSMTPServer, m.[Read], m.Starred, m.Important, m.HasAttachments, m.[Label], @FolderID as 'Folder'
-                    --, m.Folder
-                    from Mail m
-                    left join Users su on m.SendingUserID = su.UserID
-                    left join Users ru on m.ReceivingUserID = ru.UserID
-                    where m.SendingUserID = @UserID
-                    order by m.SentTime desc
-
-                ELSE
-                    select m.Id,
-                    su.StaffName as SendingStaffName, su.StaffEmail as SendingStaffEmail, ru.StaffName as ReceivingStaffName, ru.StaffEmail as ReceivingStaffEmail,	m.Subject, m.Message, m.SentTime, m.SentSuccessToSMTPServer, m.[Read],	m.Starred, m.Important,	m.HasAttachments, m.[Label], @FolderID as 'Folder'
-                    --, m.Folder
-                    from Mail m
-                    left join Users su on su.userID = m.SendingUserID
-                    left join Users ru on ru.userID = m.ReceivingUserID
-                    where m.ReceivingUserID = @UserID
-                    order by m.SentTime desc", parameters:new[] { userIdParam, folderIdParam }).ToList();
-            return Ok(results);
-        }
-
-        //[AllowAnonymous]
-        [HttpGet("label/{paramLabelId}")]
-        public IActionResult GetLabel(int paramLabelId)
-        {
-            HttpContext.Response.RegisterForDispose(_disposable);
-            var userId = UserService.GetUserIdFromToken(Request.Headers["Authorization"], _appSettings.Secret);
-            var userIdParam = new SqlParameter("@UserID", userId);
-            var labelIdParam = new SqlParameter("LabelID", paramLabelId);
-            var results = _context.MailModel.FromSqlRaw(@"
-                select m.Id, su.StaffName as SendingStaffName, su.StaffEmail as SendingStaffEmail, ru.StaffName as ReceivingStaffName, ru.StaffEmail as ReceivingStaffEmail, m.Subject, m.Message, m.SentTime, m.SentSuccessToSMTPServer, m.[Read], m.Starred, m.Important, m.HasAttachments, m.[Label], m.Folder 
-                from Mail m
-                left join Users su on su.UserID = m.SendingUserID
-                left join Users ru on ru.UserID = m.ReceivingUserID
-                where (m.SendingUserID = @UserID OR m.ReceivingUserID = @UserID)
-                and m.Label = @LabelID
-                order by m.SentTime desc", parameters:new[] { userIdParam, labelIdParam }).ToList();
-            return Ok(results);
-        }
-
-        [HttpPost("m/{paramMailId}/resend")]
-        public IActionResult ResendMail(String paramMailId)
-        {
-            HttpContext.Response.RegisterForDispose(_disposable);
-            var userId = UserService.GetUserIdFromToken(Request.Headers["Authorization"], _appSettings.Secret);
-
-            // Begin transaction
-            using var transaction = _context.Database.BeginTransaction();
+        public async Task<IActionResult> GetFolder([FromRoute] int paramFolderId)
+        {           
             try
             {
-                Guid id = new Guid(paramMailId);
-                List<MailAttachment> attachments = new List<MailAttachment>();
+                HttpContext.Response.RegisterForDispose(_disposable);
+                var userId = UserService.GetUserIdFromToken(Request.Headers["Authorization"], _appSettings.Secret);
 
-                var mailFound = _context.Mail.Include(g => g.SendingUser).Include(g => g.ReceivingUser).Where(g => g.Id == id && g.SendingUserID == userId).First();
-                if (mailFound != null)
-                {
-                    mailFound._appSettings = _appSettings;
-                    mailFound._log = _log;
-
-                    if (mailFound.HasAttachments)
-                    {
-                        attachments = _context.MailAttachments.Where(x => x.MailID == mailFound.Id).ToList();
-                    }
-
-                    Mail mailToSend = _mailService.CreateResendMail(mailFound, attachments);
-
-                    int mailStatus = mailToSend.send();
-
-                    if (mailStatus == 0 || mailStatus == -1)
-                    {
-                        transaction.Rollback();
-                        return BadRequest(new { message = "Failed to resend email." });
-                    }
-
-                    mailToSend.SentSuccessToSMTPServer = true;
-                    _context.SaveChanges();
-                    transaction.Commit();
-                    return Ok();
-                }
-                else
-                {
-                    transaction.Rollback();
-                    return BadRequest(new { message = "You are not authorised to resend the email." });
-                }
+                var result = await _mailService.GetMailsFolder(userId, paramFolderId);
+                return Ok(result);
             }
             catch (Exception ex)
             {
-                transaction.Rollback();
+                return BadRequest(new { message = ex.Message });
+            }
+            
+        }
+
+       
+        [HttpGet("label/{paramLabelId}")]
+        public async Task<IActionResult> GetLabel([FromRoute] int paramLabelId)
+        {
+            try
+            {
+                HttpContext.Response.RegisterForDispose(_disposable);
+                var userId = UserService.GetUserIdFromToken(Request.Headers["Authorization"], _appSettings.Secret);
+                
+                var result = await _mailService.GetMailsLabel(userId, paramLabelId);
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+
+                return BadRequest(new { message = ex.Message });
+            }           
+        }
+
+        [HttpPost("m/{paramMailId}/resend")]
+        public async Task<IActionResult> ResendMail([FromRoute]string paramMailId)
+        {           
+            try
+            {
+                HttpContext.Response.RegisterForDispose(_disposable);
+                var userId = UserService.GetUserIdFromToken(Request.Headers["Authorization"], _appSettings.Secret);
+
+                var result = await _mailService.ResendMail(userId, paramMailId);
+                if(result.IsSuccess)
+                {
+                    return Ok(result);
+                }                
+                else
+                {
+                    return BadRequest(new { message = result.ErrorMessage });
+                }                  
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+       
+        [AllowAnonymous]
+        [HttpGet("folderData/{paramFolderId}/{pageNumber}/{rowsOfPage}")]
+        public async Task< IActionResult> GetMailFolder([FromRoute] int paramFolderId, [FromRoute] int pageNumber,  [FromRoute] int rowsOfPage,
+            [FromQuery] string search)
+        {                     
+            try
+            {
+                var userId = UserService.GetUserIdFromToken(Request.Headers["Authorization"], _appSettings.Secret);
+                
+                var result = await _mailService.GetMails(userId, paramFolderId, pageNumber, rowsOfPage, search);
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
                 return BadRequest(new { message = ex.Message });
             }
         }
 
-        [HttpGet("folderData/{paramFolderId}/{pageNumber}/{rowsOfPage}")]
-        public IActionResult GetSentFolder(int paramFolderId, int pageNumber, int rowsOfPage)
-        {
-            // TODO: Complete the implementation of pagination functionality
-        }
+           
     }
 }
