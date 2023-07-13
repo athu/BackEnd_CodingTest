@@ -149,8 +149,7 @@ namespace WebApi.Controllers
                 return BadRequest(new { message = ex.Message });
             }
         }
-       
-        [AllowAnonymous]
+              
         [HttpGet("folderData/{paramFolderId}/{pageNumber}/{rowsOfPage}")]
         public async Task< IActionResult> GetMailFolder([FromRoute] int paramFolderId, [FromRoute] int pageNumber,  [FromRoute] int rowsOfPage,
             [FromQuery] string search)
